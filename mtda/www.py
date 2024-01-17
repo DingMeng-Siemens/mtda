@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 #
 # This software is a part of MTDA.
-# Copyright (C) 2023 Siemens Digital Industries Software
+# Copyright (C) 2024 Siemens Digital Industries Software
 #
 # ---------------------------------------------------------------------------
 # SPDX-License-Identifier: MIT
@@ -49,6 +49,12 @@ def connect():
 
         data = mtda.console_dump()
         socket.emit("console-output", {"output": data}, namespace="/mtda")
+
+        power = mtda.target_status(session_id())
+        socket.emit("power-event", {"event": power}, namespace="/mtda")
+
+        status, _, _ = mtda.storage_status(session_id())
+        socket.emit("storage-event", {"event": status}, namespace="/mtda")
 
         if mtda.video is not None:
             fmt = mtda.video.format
@@ -108,6 +114,20 @@ def power_toggle():
     mtda = app.config['mtda']
     if mtda is not None:
         return mtda.target_toggle(session=sid)
+    return ''
+
+
+@app.route('/storage-toggle')
+def storage_toggle():
+    sid = session_id()
+    mtda = app.config['mtda']
+    if mtda is not None:
+        status, _, _ = mtda.storage_status(session=sid)
+        if status == CONSTS.STORAGE.ON_HOST:
+            return 'TARGET' if mtda.storage_to_target(session=sid) else 'HOST'
+        elif status == CONSTS.STORAGE.ON_TARGET:
+            return 'HOST' if mtda.storage_to_host(session=sid) else 'TARGET'
+        return status
     return ''
 
 

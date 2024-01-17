@@ -1,8 +1,71 @@
-mtda (0.25-0) testing; urgency=medium
+mtda (0.30-0) testing; urgency=medium
 
   * development version
 
- -- Cedric Hombourger <cedric.hombourger@siemens.com>  Thu, 02 Nov 2023 22:30:00 +0100
+ -- Cedric Hombourger <cedric.hombourger@siemens.com>  Sun, 14 Jan 2024 15:00:00 +0100
+
+mtda (0.29-1) testing; urgency=medium
+
+  [ Cedric Hombourger ]
+  * feat(www): use winbox for console & video panes
+  * feat(www): use the xterm fit addon for the console to fits its window
+  * chore(www): update xterm.js to version 5.3.0
+
+ -- Cedric Hombourger <cedric.hombourger@siemens.com>  Fri, 12 Jan 2024 14:30:00 +0100
+
+mtda (0.28-1) testing; urgency=medium
+
+  [ Cedric Hombourger ]
+  * fix(power/docker): check for _container in status()
+  * feat(main): emit storage locked/unlocked events
+  * feat(www): use storage locked/unlocked events to update the UI
+  * chore(keyboard): handle special keys in main
+
+  [ Felix Moessbauer ]
+  * feat(www): expose storage toggle in web UI
+  * fix: emit power-event on socket connect
+
+ -- Cedric Hombourger <cedric.hombourger@siemens.com>  Fri, 05 Jan 2024 13:00:00 +0100
+
+mtda (0.27-1) testing; urgency=medium
+
+  [ Cedric Hombourger ]
+  * keyboard/qemu: translate symbols into key codes understood by QEMU's sendkey
+
+  [ Felix Moessbauer ]
+  * www: show current power state in web-ui
+
+ -- Cedric Hombourger <cedric.hombourger@siemens.com>  Fri, 15 Dec 2023 13:30:00 +0100
+
+mtda (0.26-1) testing; urgency=medium
+
+  [ Badrikesh Prusty ]
+  * nanopi-neo: fix mtda image fails to boot due to boot device not found
+
+  [ Cedric Hombourger ]
+  * scripts/qemu: implement secureboot and tpm reset operations
+
+  [ Felix Moessbauer ]
+  * use exact output size in clbk if available
+  * usbrelay: poll for status to confirm
+
+ -- Cedric Hombourger <cedric.hombourger@siemens.com>  Fri, 08 Dec 2023 18:30:00 +0100
+
+mtda (0.25-1) testing; urgency=medium
+
+  [ Cedric Hombourger ]
+  * power/qemu: emulate USB 3.0 with -device qemu-xhci
+  * client: support 'storage write' from an S3 bucket
+  * client: add ImageFile.new() to ease use from various storage methods
+  * storage: use exceptions for open/write instead of booleans
+  * main: refactor loading and configuration of configured sub-systems
+
+  [ Ding Meng ]
+  * storage: set storage_writing flag at the proper timing and place
+  * storage: set a static variable to tell is_mounted
+  * storage: reset storage_bmap_dict after writing and refactor
+
+ -- Cedric Hombourger <cedric.hombourger@siemens.com>  Thu, 23 Nov 2023 22:30:00 +0100
 
 mtda (0.24-1) testing; urgency=medium
 

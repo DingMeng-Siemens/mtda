@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 #
 # This software is a part of MTDA.
-# Copyright (C) 2023 Siemens Digital Industries Software
+# Copyright (C) 2024 Siemens Digital Industries Software
 #
 # ---------------------------------------------------------------------------
 # SPDX-License-Identifier: MIT
@@ -277,6 +277,12 @@ class Image(StorageController):
                 self.handle = open(self.file, "r+b")
                 self.handle.seek(0, 0)
         return True
+
+    def path(self):
+        self.mtda.debug(3, "storage.helpers.image.path()")
+        result = self.file
+        self.mtda.debug(3, "storage.helpers.image.open(): {}".format(result))
+        return result
 
     def status(self):
         self.mtda.debug(3, "storage.helpers.image.status()")

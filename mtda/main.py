@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 #
 # This software is a part of MTDA.
-# Copyright (C) 2023 Siemens Digital Industries Software
+# Copyright (C) 2024 Siemens Digital Industries Software
 #
 # ---------------------------------------------------------------------------
 # SPDX-License-Identifier: MIT
@@ -50,6 +50,9 @@ except ModuleNotFoundError:
 DEFAULT_PREFIX_KEY = 'ctrl-a'
 DEFAULT_PASTEBIN_EP = "http://pastebin.com/api/api_post.php"
 
+NBD_CONF_DIR = '/etc/nbd-server/conf.d'
+NBD_CONF_FILE = 'mtda-storage.conf'
+
 
 def _make_printable(s):
     return s.encode('ascii', 'replace').decode()
@@ -82,9 +85,11 @@ class MultiTenantDeviceAccess:
         self.storage = None
         self._pastebin_api_key = None
         self._pastebin_endpoint = None
+        self._storage_locked = False
         self._storage_mounted = False
         self._storage_opened = False
         self._storage_owner = None
+        self._storage_status = CONSTS.STORAGE.UNKNOWN
         self._writer = None
         self._writer_data = None
         self.blksz = CONSTS.WRITER.READ_SIZE
@@ -467,15 +472,47 @@ class MultiTenantDeviceAccess:
         self.mtda.debug(3, "env_set(): %s" % str(result))
         return result
 
-    def keyboard_write(self, input_str, session=None):
+    def keyboard_write(self, what, session=None):
         self.mtda.debug(3, "main.keyboard_write()")
 
         self._session_check(session)
         result = None
         if self.keyboard is not None:
-            result = self.keyboard.write(input_str)
+            special_keys = {
+                    "<down>": self.keyboard.down,
+                    "<enter>": self.keyboard.enter,
+                    "<esc>": self.keyboard.esc,
+                    "<f1>": self.keyboard.f1,
+                    "<f2>": self.keyboard.f2,
+                    "<f3>": self.keyboard.f3,
+                    "<f4>": self.keyboard.f4,
+                    "<f5>": self.keyboard.f5,
+                    "<f6>": self.keyboard.f6,
+                    "<f7>": self.keyboard.f7,
+                    "<f8>": self.keyboard.f8,
+                    "<f9>": self.keyboard.f9,
+                    "<f10>": self.keyboard.f10,
+                    "<f11>": self.keyboard.f11,
+                    "<f12>": self.keyboard.f12,
+                    "<left>": self.keyboard.left,
+                    "<right>": self.keyboard.right,
+                    "<up>": self.keyboard.up
+                    }
 
-        self.mtda.debug(3, "main.keyboard_write(): %s" % str(result))
+            while what != "":
+                # check for special keys such as <esc>
+                if what.startswith('<') and '>' in what:
+                    key = what.split('>')[0] + '>'
+                    if key in special_keys:
+                        offset = len(key)
+                        what = what[offset:]
+                        special_keys[key]()
+                        continue
+                key = what[0]
+                what = what[1:]
+                self.keyboard.write(key)
+
+        self.mtda.debug(3, "main.keyboard_write(): {}".format(result))
         return result
 
     def monitor_remote(self, host, screen):
@@ -552,7 +589,13 @@ class MultiTenantDeviceAccess:
                 self.socket.send(topic, flags=zmq.SNDMORE)
                 self.socket.send(data)
 
-    def _storage_event(self, status):
+    def _storage_event(self, status, reason=""):
+        if status in [CONSTS.STORAGE.ON_HOST,
+                      CONSTS.STORAGE.ON_NETWORK,
+                      CONSTS.STORAGE.ON_TARGET]:
+            self._storage_status = status
+        if reason:
+            status = status + " " + reason
         self.notify(CONSTS.EVENTS.STORAGE, status)
 
     def storage_bytes_written(self, session=None):
@@ -595,11 +638,20 @@ class MultiTenantDeviceAccess:
         if self.storage is None:
             result = False
         else:
+            conf = os.path.join(NBD_CONF_DIR, NBD_CONF_FILE)
+            if os.path.exists(conf):
+                os.unlink(conf)
+                cmd = ['systemctl', 'restart', 'nbd-server']
+                subprocess.check_call(cmd)
+
             self._writer.stop()
             self._writer_data = None
             self._storage_opened = not self.storage.close()
             self._storage_owner = None
             result = (self._storage_opened is False)
+
+        if self.storage is not None:
+            self.storage_locked()
 
         self.mtda.debug(3, "main.storage_close(): %s" % str(result))
         return result
@@ -608,35 +660,48 @@ class MultiTenantDeviceAccess:
         self.mtda.debug(3, "main.storage_locked()")
 
         self._session_check(session)
+        result = False
+        reason = "unsure"
         if self._check_locked(session):
+            reason = "target is locked"
             result = True
         # Cannot swap the shared storage device between the host and target
         # without a driver
         elif self.storage is None:
-            self.mtda.debug(4, "storage_locked(): no shared storage device")
+            reason = "no shared storage device"
             result = True
         # If hotplugging is supported, swap only if the shared storage
         # isn't opened
         elif self.storage.supports_hotplug() is True:
             result = self._storage_opened
+            if result is True:
+                reason = "hotplug supported but storage is opened"
         # We also need a power controller to be safe
         elif self.power is None:
-            self.mtda.debug(4, "storage_locked(): no power controller")
+            reason = "no power controller"
             result = True
         # The target shall be OFF
-        elif self.target_status() != "OFF":
-            self.mtda.debug(4, "storage_locked(): target isn't off")
+        elif self._target_status() != "OFF":
+            reason = "target is on"
             result = True
         # Lastly, the shared storage device shall not be opened
         elif self._storage_opened is True:
-            self.mtda.debug(4, "storage_locked(): "
-                               "shared storage is in use (opened)")
+            reason = "shared storage is in use (opened)"
             result = True
-        # We may otherwise swap our shared storage device
-        else:
-            result = False
 
-        self.mtda.debug(3, "main.storage_locked(): %s" % str(result))
+        if result is True:
+            self.mtda.debug(4, "storage_locked(): {}".format(reason))
+            event = CONSTS.STORAGE.LOCKED
+        else:
+            event = CONSTS.STORAGE.UNLOCKED
+            reason, _, _ = self.storage_status()
+
+        # Notify UI if storage becomes locked/unlocked
+        if result != self._storage_locked:
+            self._storage_locked = result
+            self._storage_event(event, reason)
+
+        self.mtda.debug(3, "main.storage_locked(): {}".format(result))
         return result
 
     def storage_mount(self, part=None, session=None):
@@ -652,6 +717,9 @@ class MultiTenantDeviceAccess:
         else:
             result = self.storage.mount(part)
             self._storage_mounted = (result is True)
+
+        if self.storage is not None:
+            self.storage_locked()
 
         self.mtda.debug(3, "main.storage_mount(): %s" % str(result))
         return result
@@ -673,6 +741,38 @@ class MultiTenantDeviceAccess:
         self.mtda.debug(3, "main.storage_update(): %s" % str(result))
         return result
 
+    def storage_network(self, session=None):
+        self.mtda.debug(3, "main.storage_network()")
+
+        result = False
+        self._session_check(session)
+        if self.storage_locked(session) is False:
+            if self.storage.to_host() is True:
+                conf = os.path.join(NBD_CONF_DIR, NBD_CONF_FILE)
+                file = None
+
+                if hasattr(self.storage, 'path'):
+                    file = self.storage.path()
+
+                if file is not None and os.path.exists(NBD_CONF_DIR):
+                    with open(conf, 'w') as f:
+                        f.write('[mtda-storage]\n')
+                        f.write('authfile = /etc/nbd-server/allow\n')
+                        f.write('exportname = {}\n'.format(file))
+                        f.close()
+
+                    cmd = ['systemctl', 'restart', 'nbd-server']
+                    subprocess.check_call(cmd)
+
+                    cmd = ['systemctl', 'is-active', 'nbd-server']
+                    subprocess.check_call(cmd)
+
+                    self._storage_event(CONSTS.STORAGE.ON_NETWORK)
+                    result = True
+
+        self.mtda.debug(3, "main.storage_network(): {}".format(result))
+        return result
+
     def storage_open(self, session=None):
         self.mtda.debug(3, 'main.storage_open()')
 
@@ -691,6 +791,8 @@ class MultiTenantDeviceAccess:
             self._storage_opened = True
             self._storage_owner = session
             self._writer.start()
+            if self.storage is not None:
+                self.storage_locked()
 
         self.mtda.debug(3, 'main.storage_open(): success')
 
@@ -702,10 +804,9 @@ class MultiTenantDeviceAccess:
             self.mtda.debug(4, "storage_status(): no shared storage device")
             result = CONSTS.STORAGE.UNKNOWN, False, 0
         else:
-            # avoid costly query of storage state when we know it anyways
-            status = CONSTS.STORAGE.ON_HOST \
-                if self._writer.writing else self.storage.status()
-            result = status, self._writer.writing, self._writer.written
+            result = (self._storage_status,
+                      self._writer.writing,
+                      self._writer.written)
 
         self.mtda.debug(3, "main.storage_status(): %s" % str(result))
         return result
@@ -722,7 +823,7 @@ class MultiTenantDeviceAccess:
             self.error('cannot switch storage to host: locked')
             result = False
 
-        self.mtda.debug(3, "main.storage_to_host(): %s" % str(result))
+        self.mtda.debug(3, "main.storage_to_host(): {}".format(result))
         return result
 
     def storage_to_target(self, session=None):
@@ -747,7 +848,7 @@ class MultiTenantDeviceAccess:
         self._session_check(session)
         if self.storage_locked(session) is False:
             result, writing, written = self.storage_status(session)
-            if result == CONSTS.STORAGE.ON_HOST:
+            if result in [CONSTS.STORAGE.ON_HOST, CONSTS.STORAGE.ON_NETWORK]:
                 if self.storage.to_target() is True:
                     self._storage_event(CONSTS.STORAGE.ON_TARGET)
             elif result == CONSTS.STORAGE.ON_TARGET:
@@ -956,6 +1057,9 @@ class MultiTenantDeviceAccess:
 
                 self._power_event(CONSTS.POWER.ON)
 
+        if self.storage is not None:
+            self.storage_locked()
+
         self.mtda.debug(3, "main._target_on(): {}".format(result))
         return result
 
@@ -1014,6 +1118,9 @@ class MultiTenantDeviceAccess:
             result = self.power.off()
         self._composite_stop()
         self._power_event(CONSTS.POWER.OFF)
+
+        if self.storage is not None:
+            self.storage_locked()
 
         self.mtda.debug(3, "main._target_off(): {}".format(result))
         return result
@@ -1330,6 +1437,9 @@ class MultiTenantDeviceAccess:
         self.mtda.debug(3, "main.post_configure_storage()")
         self._writer = AsyncImageWriter(self, storage)
 
+        import atexit
+        atexit.register(self.storage_close)
+
     def load_remote_config(self, parser):
         self.mtda.debug(3, "main.load_remote_config()")
 
@@ -1461,6 +1571,7 @@ class MultiTenantDeviceAccess:
                 print('Probe of the shared storage device failed!',
                       file=sys.stderr)
                 return False
+            self._storage_event(CONSTS.STORAGE.UNLOCKED)
 
         if self.console is not None:
             # Create a publisher
